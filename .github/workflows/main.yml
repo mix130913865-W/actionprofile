@@ -20,7 +20,7 @@ jobs:
     steps:
       # Step 1：將 GitHub 儲存庫的程式碼 checkout 到 runner 主機。
       - name: Code checkout
-        uses: actions/checkout@v16
+        uses: actions/checkout@v5
 
       # Step 2：使用 Maven 進行建置（編譯 + 測試 + 打包）。
       - name: Maven Build
