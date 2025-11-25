@@ -45,7 +45,7 @@ jobs:
 
       # Step 2：執行 Maven 測試（單元測試 + 整合測試）
       - name: Run tests on main branch
-        run: maven test
+        run: mvn test
 
       # Step 3：執行 Maven Checkstyle（檢查程式碼風格是否符合規範）
       - name: Checkstyle
