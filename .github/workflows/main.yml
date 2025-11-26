@@ -8,67 +8,108 @@ name: Vprofile CICD Workflow
 # ------------------------------------------------------
 on:
 
-  # 1) push：當 push 到指定分支時觸發
+  # 1) push：當 push 到 main 或 develop 時執行
   push:
-    branches: [ "main", "develop" ]   # main 和 develop 兩個分支 push 都會觸發
+    branches: [ "main", "develop" ]
 
-  # 2) pull_request：當 PR 目標分支是 main / develop 時觸發
+  # 2) pull_request：當 PR 的目標分支是 main / develop 時執行
   pull_request:
     branches: [ "main", "develop" ]
 
-  # 3) workflow_dispatch：允許手動按按鈕執行（Run workflow）
+  # 3) workflow_dispatch：允許手動 Run workflow
   workflow_dispatch:
 
-  # 4) schedule：定時排程
-  #    cron 表示每天 UTC 時區凌晨 2 點自動執行
+  # 4) schedule：定時排程（工作天 14:10 UTC）
+  #    → 台灣時間 22:10 (Mon–Fri)
   schedule:
-    - cron: "0 2 * * *"
+    - cron: "10 14 * * 1-5"
 
 # ------------------------------------------------------
-# jobs：這個 Workflow 裡面包含的所有工作階段（Job）
+# permissions：設定 GitHub Token 權限，降低資安風險
+# ------------------------------------------------------
+permissions:
+  contents: read   # 只允許讀取 repo，不允許寫入
+
+# ------------------------------------------------------
+# jobs：定義 Build、Testing 等工作階段
 # ------------------------------------------------------
 jobs:
 
   # ======================================================
-  # 第一個 Job：Build（編譯 + 打包）
+  # 第一個 Job：Build（編譯、打包、產出 WAR + 失敗通知）
   # ======================================================
   Build:
-    # GitHub 提供的 Ubuntu Runner
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest    # GitHub 提供的 Ubuntu Runner
 
     steps:
-      # Step 1：將 Repo 原始碼 checkout 到 runner 主機
+      # --------------------------------------------------
+      # Step 1：將 Repo 原始碼 checkout 下來
+      # --------------------------------------------------
       - name: Code checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          fetch-depth: 0   # 下載完整 git 歷史（避免某些插件無法找到 commit）
+          fetch-depth: 0      # 下載完整 Git 歷史（避免插件找不到 commit）
 
-      # Step 2：執行 Maven Build
+      # --------------------------------------------------
+      # Step 2：使用 Maven 進行建置
       # mvn install = compile + test + package
+      # --------------------------------------------------
       - name: Maven Build
         run: mvn install
 
+      # --------------------------------------------------
+      # Step 3：上傳 Build 後的 Artifact（WAR 檔）
+      #         可在 Actions → Artifacts 中下載
+      # --------------------------------------------------
+      - name: Upload Build Artifact (WAR)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vprofile-app   # Artifact 名稱
+          path: target/*.war   # 指定要上傳的 WAR 檔路徑
+
+      # --------------------------------------------------
+      # Step 4：若 Build Job 失敗則通知（簡易 echo 版本）
+      # --------------------------------------------------
+      - name: Notify if Build Fails
+        if: failure()          # 僅當 Build Job 失敗時才執行
+        run: echo "🚨 Build job failed! Please check logs."
+
 
   # ======================================================
-  # 第二個 Job：Testing（單元測試、Checkstyle）
+  # 第二個 Job：Testing（依條件執行 test / checkstyle）
   # ======================================================
   Testing:
     runs-on: ubuntu-latest
 
-    # needs: Build → 必須等 Build Job 成功才會執行 Testing
+    # needs: Build → Build Job 成功後才執行 Testing
     needs: Build
 
     steps:
-      # Step 1：再次 checkout 原始碼（確保乾淨測試環境）
+      # --------------------------------------------------
+      # Step 1：再次 checkout 原始碼（每個 job 都必須自己 checkout）
+      # --------------------------------------------------
       - name: Code checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Step 2：Maven 測試（執行單元測試 + 整合測試）
+      # --------------------------------------------------
+      # Step 2：在 main 分支執行單元測試
+      # --------------------------------------------------
       - name: Run tests on main branch
+        if: github.ref == 'refs/heads/main'   # 條件：只有 main 才跑 test
         run: mvn test
 
-      # Step 3：Checkstyle 程式碼風格檢查
+      # --------------------------------------------------
+      # Step 3：在 main 分支執行 Checkstyle 風格檢查
+      # --------------------------------------------------
       - name: Checkstyle
+        if: github.ref == 'refs/heads/main'   # 條件：只有 main 才跑 checkstyle
         run: mvn checkstyle:checkstyle
+
+      # --------------------------------------------------
+      # Step 4：其他分支跳過測試與靜態分析（加速 CI）
+      # --------------------------------------------------
+      - name: Run tests on other branches
+        if: github.ref != 'refs/heads/main'
+        run: echo "Skipping unit tests and code analysis"
