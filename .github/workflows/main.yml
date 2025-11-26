@@ -1,169 +1,169 @@
 # ------------------------------------------------------
-# Workflow 名稱：顯示在 GitHub Actions 左側列表
+# Workflow 名稱
 # ------------------------------------------------------
 name: Vprofile CICD Workflow
 
 # ------------------------------------------------------
-# on：定義 Workflow 的觸發條件
+# 觸發條件
 # ------------------------------------------------------
-on:
+on: 
   push:
-    # 任何 push 到 main 或 develop 分支都會觸發
-    branches: [ "main", "develop" ]
+    branches: 
+      - main  # 當 main 分支有 commit push 時觸發
 
   pull_request:
-    # 任何 PR 送到 main 或 develop 會觸發
-    branches: [ "main", "develop" ]
+    branches: 
+      - main  # 當 main 分支有 PR 建立時觸發
 
-  # 手動觸發 workflow（UI 點擊執行）
-  workflow_dispatch:
+  workflow_dispatch:  # 可手動觸發 workflow
 
-  # 定時執行（CRON 表達式）
-  # 格式：分 時 日 月 星期
-  # 此處為：每週一至週五，14:10（UTC）
   schedule:
-    - cron: "10 14 * * 1-5"
-
-
-# ------------------------------------------------------
-# permissions：限制 GitHub Token 權限，提升安全性
-# ------------------------------------------------------
-permissions:
-  contents: read   # Token 只能讀取內容，不能寫入
-
+    - cron: "10 14 * * 1-5"   # 定時觸發：週一到週五 14:10 (UTC+0)
 
 # ------------------------------------------------------
-# jobs：定義整個工作流程的所有 Job
+# 環境變數
+# ------------------------------------------------------
+env:
+  ECR_REPOSITORY: 'vprofile-appimage'  # Docker 映像 repository 名稱
+
+# ------------------------------------------------------
+# 權限設定
+# ------------------------------------------------------
+permissions: 
+  contents: read  # 只讀取 repo 內容即可
+
+# ------------------------------------------------------
+# Jobs 區塊
 # ------------------------------------------------------
 jobs:
 
-  # ======================================================
-  # Job 1：Build（編譯、打包、產出 WAR、顯示失敗通知）
-  # ======================================================
+  # ------------------------------------------------------
+  # Build Job
+  # ------------------------------------------------------
   Build:
-    runs-on: ubuntu-latest   # 執行環境使用 GitHub Ubuntu Runner
-
+    runs-on: ubuntu-latest  # 使用最新 Ubuntu runner
     steps:
-      # -----------------------------
-      # 步驟 1：下載 Repo 程式碼
-      # actions/checkout 是官方提供的動作
-      # fetch-depth: 0 → 抓完整 Git 歷史（非 shallow clone）
-      # -----------------------------
+      # Checkout 原始碼
       - name: Code checkout
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # 取得完整 commit history，便於後續使用
 
-      # -----------------------------
-      # 步驟 2：使用 Maven 編譯專案（compile + test + package）
-      # mvn install → 會產生 .war 與安裝到本地 Maven repo
-      # -----------------------------
+      # Maven Build
       - name: Maven Build
-        run: mvn install
+        run: mvn install  # 編譯並生成 WAR 檔
 
-      # -----------------------------
-      # 步驟 3：上傳建置後的 WAR 檔案
-      # actions/upload-artifact → 便於後續 Job 或手動下載
-      # -----------------------------
+      # 上傳建置產物
       - name: Upload Build Artifact (WAR)
         uses: actions/upload-artifact@v4
         with:
-          name: vprofile-app         # Artifact 名稱
-          path: target/*.war         # WAR 檔案路徑
+          name: vprofile-app  # artifact 名稱
+          path: target/*.war  # 上傳目標
 
-      # -----------------------------
-      # 步驟 4：在 Build 失敗時輸出訊息
-      # if: failure() → 僅於前面步驟有錯誤時執行
-      # -----------------------------
+      # Build 失敗通知
       - name: Notify if Build Fails
-        if: failure()
+        if: failure()  # 只有當 Build 失敗時才執行
         run: echo "🚨 Build job failed! Please check logs."
 
-
-  # ======================================================
-  # Job 2：Testing（根據分支執行不同測試）
-  #   - main 分支 → 跑完整單元測試 + checkstyle
-  #   - 其他分支 → 跳過
-  # ======================================================
+  # ------------------------------------------------------
+  # Testing Job
+  # ------------------------------------------------------
   Testing:
     runs-on: ubuntu-latest
-    needs: Build        # 必須等 Build Job 完成
-
+    needs: Build  # 必須等 Build 完成
     steps:
-      # -----------------------------
-      # 同樣需要下載程式碼，因為不同 Job 的工作目錄不共享
-      # -----------------------------
+      # Checkout 原始碼
       - name: Code checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # -----------------------------
-      # main 分支 → 執行單元測試
-      # github.ref 會輸出完整 refs，例如：refs/heads/main
-      # -----------------------------
+      # 針對 main branch 執行測試
       - name: Run tests on main branch
         if: github.ref == 'refs/heads/main'
         run: mvn test
 
-      # -----------------------------
-      # main 分支 → 執行 Checkstyle 程式碼品質檢查
-      # -----------------------------
+      # Checkstyle 程式碼檢查
       - name: Checkstyle
         if: github.ref == 'refs/heads/main'
         run: mvn checkstyle:checkstyle
 
-      # -----------------------------
-      # 非 main 分支 → 減少 CI 時間，不執行測試
-      # -----------------------------
+      # 其他分支跳過測試與檢查
       - name: Run tests on other branches
         if: github.ref != 'refs/heads/main'
         run: echo "Skipping unit tests and code analysis"
 
-
-  # ======================================================
-  # Job 3：Security_Scan（使用 Trivy 做漏洞掃描）
-  # 掃描目標：OS 漏洞 + Library 漏洞
-  # 結果輸出 JSON
-  # ======================================================
+  # ------------------------------------------------------
+  # Security Scan Job
+  # ------------------------------------------------------
   Security_Scan:
     runs-on: ubuntu-latest
-    needs: Build
-
+    needs: Build  # 必須等 Build 完成
     steps:
-      # -----------------------------
-      # 下載程式碼以進行 filesystem 掃描
-      # -----------------------------
+      # Checkout 原始碼
       - name: Code checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # -----------------------------
-      # 使用 Trivy 掃描目錄（scan-type: fs）
-      # 參數說明：
-      #   - scan-type: fs        掃整個檔案系統目錄
-      #   - scan-ref: .          掃描目前 Repo
-      #   - format: json         輸出為 JSON 檔
-      #   - exit-code: 0         有漏洞也不會讓 Job 失敗
-      #   - vuln-type: os,library   掃 OS 以及程式套件漏洞
-      #   - output: trivy-results.json   輸出檔名
-      # -----------------------------
+      # 使用 Trivy 執行 filesystem 掃描
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
-          scan-ref: .
-          format: json
-          exit-code: 0
-          vuln-type: os,library
-          output: trivy-results.json
+          scan-ref: .  # 掃描當前目錄
+          format: json  # 輸出格式為 JSON
+          exit-code: 0  # 不因漏洞失敗 workflow
+          vuln-type: os,library  # 掃描 OS 與 library
+          output: trivy-results.json  # 輸出檔名
 
-      # -----------------------------
-      # 上傳掃描結果，以便查看漏洞報告
-      # -----------------------------
+      # 上傳掃描結果
       - name: Upload Trivy scan results as artifact
         uses: actions/upload-artifact@v4
         with:
           name: trivy-scan-results
           path: trivy-results.json
+
+  # ------------------------------------------------------
+  # Build and Publish Docker Image Job
+  # ------------------------------------------------------
+  BUILD_AND_PUBLISH:
+    name: BUILD_AND_PUBLISH
+    runs-on: ubuntu-latest
+    environment: production  # 使用 production environment，取得 secrets
+    needs: [Build, Testing, Security_Scan]  # 依賴三個前置 Job
+    if: github.ref == 'refs/heads/main'  # 只對 main branch 執行
+    steps:
+      # Checkout 原始碼
+      - name: Code checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 設定 AWS 憑證
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}  # 從 secrets 取得 Access Key
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}  # 從 secrets 取得 Secret Key
+          aws-region: ${{ vars.AWS_REGION }}  # AWS Region 從 workflow vars 取得
+
+      # 登入 Amazon ECR
+      - name: Login to Amazon ECR
+        id: login-ecr  # step ID，可在後續使用 outputs
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 建置、標記、並推送 Docker 映像
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}  # 從 login step output 取得 registry
+          IMAGE_TAG: ${{ github.sha }}  # 使用 commit SHA 作為 tag
+        run: |
+        
+          # 建置 Docker 映像
+				  docker build -f Docker-files/app/multistage/Dockerfile \
+          -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          
+          # 推送至 ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
